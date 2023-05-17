@@ -9,7 +9,6 @@ CREATE TABLE IF NOT EXISTS token_holders (
 -- Creates a new table to store the token transactions
 CREATE TABLE IF NOT EXISTS token_transactions (
     transaction_hash VARCHAR(255) PRIMARY KEY,
-    block_number BIGINT,
     token_symbol VARCHAR(50),
     from_address VARCHAR(255),
     to_address VARCHAR(255),

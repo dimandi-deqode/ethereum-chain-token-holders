@@ -20,7 +20,7 @@ def setup_database():
         conn.commit()
     except DatabaseError as e:
         # Handle the exception
-        print("An error occurred while initializing the database:", e)
+        print("An error occurred while initializing the database: ")
         conn.rollback()
         # Re-raise the exception
         raise
@@ -59,7 +59,7 @@ def insert_transaction_hashes(conn, cur, block_number, transaction_hashes):
         # Commit the changes to the database
         conn.commit()
     except DatabaseError as e:
-        print("An error occured while inserting the transaction hashes: ", e)
+        print("An error occured while inserting the transaction hashes: ")
         conn.rollback()
         # Re-raise the exception
         raise
@@ -75,7 +75,7 @@ def delete_transaction(conn, cur, transaction_hash):
         # Commit the changes to the database
         conn.commit()
     except DatabaseError as e:
-        print("An error occured while deleting the processed transaction: ", e)
+        print("An error occured while deleting the processed transaction: ")
         conn.rollback()
         # Re-raise the exception
         raise
@@ -98,36 +98,36 @@ def process_transaction(conn, cur, transaction_hash):
             time.sleep(1)
             continue
 
-    # Skip the transaction if it is not successful
-    if not transaction_receipt or transaction_receipt['status'] == 0 or len(logs_list) == 0:
-        delete_transaction(conn, cur, transaction_hash)
-        return
-    logs_data = logs_list[0]
-    
-    # Skip the transaction if it is not transfer event
-    if 'topics' not in logs_data or len(logs_data['topics']) != 3 or logs_data['topics'][0].hex() != transfer_event_signature:
-        delete_transaction(conn, cur, transaction_hash)
-        return
-
-    # Get the token contract address of the transferred token
-    to_address_token = transaction_receipt['to']
-
-    # Skip the transaction if the transferred token is not in the considered tokens list
-    if to_address_token not in token_addresses:
-        delete_transaction(conn, cur, transaction_hash)
-        return
-
-    # Extract the from and to addresses
-    from_address = Web3.toChecksumAddress(logs_data['topics'][1].hex()[26:])
-    to_address = Web3.toChecksumAddress(logs_data['topics'][2].hex()[26:])
-    
-    # Extract the value
-    value = int(logs_data['data'], 16)
-
-    # Get the token symbol
-    token_symbol = token_addresses[to_address_token]
-    
     try:
+        # Skip the transaction if it is not successful
+        if not transaction_receipt or transaction_receipt['status'] == 0 or len(logs_list) == 0:
+            delete_transaction(conn, cur, transaction_hash)
+            return
+        logs_data = logs_list[0]
+        
+        # Skip the transaction if it is not transfer event
+        if 'topics' not in logs_data or len(logs_data['topics']) != 3 or logs_data['topics'][0].hex() != transfer_event_signature:
+            delete_transaction(conn, cur, transaction_hash)
+            return
+
+        # Get the token contract address of the transferred token
+        to_address_token = transaction_receipt['to']
+
+        # Skip the transaction if the transferred token is not in the considered tokens list
+        if to_address_token not in token_addresses:
+            delete_transaction(conn, cur, transaction_hash)
+            return
+
+        # Extract the from and to addresses
+        from_address = Web3.toChecksumAddress(logs_data['topics'][1].hex()[26:])
+        to_address = Web3.toChecksumAddress(logs_data['topics'][2].hex()[26:])
+        
+        # Extract the value
+        value = int(logs_data['data'], 16)
+
+        # Get the token symbol
+        token_symbol = token_addresses[to_address_token]
+    
         # Insert the token transaction to the database
         cur.execute("""
             INSERT INTO token_transactions (transaction_hash, token_symbol, from_address, to_address, value) 
@@ -135,18 +135,14 @@ def process_transaction(conn, cur, transaction_hash):
         """, {'hash': transaction_hash, 'symbol': token_symbol, 'from_address': from_address, 'to_address': to_address, 'value': value})
         
         # Upsert the balances for both from and to addresses
-        cur.execute("""
+        upsert_query = """
             INSERT INTO token_holders (token_symbol, holder_address, balance)
             VALUES (%(symbol)s, %(address)s, %(balance)s)
             ON CONFLICT (token_symbol, holder_address)
             DO UPDATE SET balance = token_holders.balance + %(balance)s
-        """, {'symbol': token_symbol, 'address': from_address, 'balance': -value})
-        cur.execute("""
-            INSERT INTO token_holders (token_symbol, holder_address, balance)
-            VALUES (%(symbol)s, %(address)s, %(balance)s)
-            ON CONFLICT (token_symbol, holder_address)
-            DO UPDATE SET balance = token_holders.balance + %(balance)s
-        """, {'symbol': token_symbol, 'address': to_address, 'balance': value})  
+        """
+        cur.execute(upsert_query, {'symbol': token_symbol, 'address': from_address, 'balance': -value})
+        cur.execute(upsert_query, {'symbol': token_symbol, 'address': to_address, 'balance': value})  
 
         # Delete the transaction hash from the state table
         cur.execute("DELETE FROM batch_state WHERE transaction_hash = %s", (transaction_hash,))  
@@ -155,7 +151,7 @@ def process_transaction(conn, cur, transaction_hash):
         conn.commit()
     except DatabaseError as e:
         # Handle the exception
-        print('An error occurred:', e)
+        print('An error occurred while processing the transaction:')
         conn.rollback()
         # Re-raise the exception
         raise
@@ -187,13 +183,13 @@ def process_block(block_number):
                     block = w3.eth.get_block(block_number)
                     transaction_hashes = block['transactions']
                     transaction_hashes = [transaction_hash.hex() for transaction_hash in transaction_hashes]
-                    insert_transaction_hashes(conn, cur, block_number, transaction_hashes)
                     break
                 except Exception as e:
                     # Handle the exception
                     print('Retrying for the block: ', block_number)
                     time.sleep(1)
                     continue
+            insert_transaction_hashes(conn, cur, block_number, transaction_hashes)
         else:
             # Extract the transaction hashes from the rows got from the state table
             transaction_hashes = [row[0] for row in rows]
@@ -205,9 +201,12 @@ def process_block(block_number):
         # Insert the current block into the processed blocks
         cur.execute("INSERT INTO processed_blocks (block_number) VALUES (%s)", (block_number,))
         conn.commit()
+    except DatabaseError as e:
+        # Handle the exception
+        raise
     except Exception as e:
         # Handle the exception
-        print("An error occured:--- ", e)
+        print("An error occured: ")
         raise
     finally:
         # Close the database connection
@@ -239,7 +238,7 @@ def update_block_number_table(block_number):
         conn.commit()
     except DatabaseError as e:
         # Handle the exception
-        print("An error occurred while updating the block number table:", e)
+        print("An error occurred while updating the block number table: ")
         # Re-raise the exception
         raise
     finally:
@@ -276,12 +275,12 @@ def fetch_prev_block_number():
         return prev_block_number
     except DatabaseError as e:
         # Handle the exception
-        print("An error occurred while fetching the previous block number from the database:", e)
+        print("An error occurred while fetching the previous block number from the database: ")
         # Re-raise the exception
         raise
     except Exception as e:
         # Handle the exception
-        print("An error occurred while setting the previous block number:", e)
+        print("An error occurred while setting the previous block number: ")
         # Re-raise the exception
         raise
     finally:
@@ -300,7 +299,7 @@ def process_blocks_batch(start_block, end_block):
             pool.map(process_block, block_numbers)
     except Exception as e:
         # Handle the exception
-        print("An error occured: ", e)
+        print("An error occured while processing the blocks batch: ")
         # Re-raise the exception
         raise
 
@@ -315,7 +314,16 @@ if __name__ == '__main__':
         # Main loop
         while True:
             # Get the latest block number
-            cur_block_number = w3.eth.blockNumber
+            while True:
+                try:
+                    cur_block_number = w3.eth.blockNumber
+                    break
+                except Exception as e:
+                    # Handle the exception
+                    print("Retrying to get the previous block number...")
+                    time.sleep(1)
+                    continue
+
             print('================================')
             print('Latest block: ', cur_block_number)
 
@@ -339,6 +347,7 @@ if __name__ == '__main__':
                 update_block_number_table(end_block)
             except Exception as e:
                 # Handle the exception
+                print(e)
                 raise
                 break
 
@@ -347,4 +356,4 @@ if __name__ == '__main__':
             print('================================')
     except Exception as e:
         # Handle the exception
-        print("An error occured: ", e)
+        print(e)
