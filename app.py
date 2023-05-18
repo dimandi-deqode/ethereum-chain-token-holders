@@ -1,6 +1,5 @@
 from web3 import Web3
 from db import connect_db
-from erc20_abi import ERC20_ABI
 from psycopg2 import DatabaseError
 from multiprocessing import Pool
 import psycopg2
@@ -59,14 +58,13 @@ def insert_transaction_hashes(conn, cur, block_number, transaction_hashes):
         # Commit the changes to the database
         conn.commit()
     except DatabaseError as e:
-        print("An error occured while inserting the transaction hashes: ")
-        conn.rollback()
+        print("An error occured while inserting the transaction hashes!")
         # Re-raise the exception
         raise
 
 def delete_transaction(conn, cur, transaction_hash):
     """
-    Delete the processed transaction.
+    Delete the processed transaction hash.
     """
     try:
         # Delete the transaction from the state table
@@ -75,8 +73,7 @@ def delete_transaction(conn, cur, transaction_hash):
         # Commit the changes to the database
         conn.commit()
     except DatabaseError as e:
-        print("An error occured while deleting the processed transaction: ")
-        conn.rollback()
+        print("An error occured while deleting the transaction hash!")
         # Re-raise the exception
         raise
 
@@ -85,7 +82,6 @@ def process_transaction(conn, cur, transaction_hash):
     Process the given transaction.
     """
     # Get the transaction reciept of the transaction and get the logs from it
-    # transaction_receipt = {}
     while True:
         try:
             # Extract the transaction receipt from web3
@@ -94,7 +90,7 @@ def process_transaction(conn, cur, transaction_hash):
             break
         except Exception as e:
             # Handle the exception
-            print('Retrying for the transaction: ', transaction_hash)
+            print("Retrying for the transaction: ", transaction_hash)
             time.sleep(1)
             continue
 
@@ -151,8 +147,12 @@ def process_transaction(conn, cur, transaction_hash):
         conn.commit()
     except DatabaseError as e:
         # Handle the exception
-        print('An error occurred while processing the transaction:')
-        conn.rollback()
+        print("An error occurred while processing the transaction!")
+        # Re-raise the exception
+        raise
+    except Exception as e:
+        # Handle the exception
+        print("An error occurred while processing the transaction!")
         # Re-raise the exception
         raise
         
@@ -186,7 +186,7 @@ def process_block(block_number):
                     break
                 except Exception as e:
                     # Handle the exception
-                    print('Retrying for the block: ', block_number)
+                    print("Retrying for the block: ", block_number)
                     time.sleep(1)
                     continue
             insert_transaction_hashes(conn, cur, block_number, transaction_hashes)
@@ -203,10 +203,13 @@ def process_block(block_number):
         conn.commit()
     except DatabaseError as e:
         # Handle the exception
+        print("An error occured while processing the block: ", block_number)
+        conn.rollback()
         raise
     except Exception as e:
         # Handle the exception
-        print("An error occured: ")
+        print("An error occured while processing the block: ", block_number)
+        # print(e)
         raise
     finally:
         # Close the database connection
@@ -231,14 +234,15 @@ def update_block_number_table(block_number):
         else:
             cur.execute("UPDATE constants SET block_number = %s", (block_number,))
         
-        # Delete all the records from the processed blocks table
+        # Empty the processed blocks table
         cur.execute("DELETE FROM processed_blocks")
 
         # Commit changes to the database
         conn.commit()
     except DatabaseError as e:
         # Handle the exception
-        print("An error occurred while updating the block number table: ")
+        print("An error occurred while updating the block number table!")
+        conn.rollback()
         # Re-raise the exception
         raise
     finally:
@@ -256,31 +260,34 @@ def fetch_prev_block_number():
         cur = conn.cursor()
 
         # Fetch the previous block number from the table if it's not empty,
-        # else set it to one less than the current block in the blockchain
+        # else set it to one less than the current block in the blockchain and add it to the table
         cur.execute("SELECT block_number FROM constants")
         if cur.rowcount == 0:
             while True:
                 try:
                     prev_block_number = w3.eth.blockNumber - 1
-                    break
                 except Exception as e:
                     # Handle the exception
                     print("Retrying to get the previous block number...")
                     time.sleep(1)
                     continue
+                # Add this previous block number to the constants table
+                cur.execute("INSERT INTO constants (block_number) VALUES (%s)", (prev_block_number,))
+                conn.commit()
+                break
         else:
-            cur.execute("SELECT block_number FROM constants")
             prev_block_number = cur.fetchone()[0]
 
         return prev_block_number
     except DatabaseError as e:
         # Handle the exception
-        print("An error occurred while fetching the previous block number from the database: ")
+        print("An error occurred while fetching the previous block number from the database!")
+        conn.rollback()
         # Re-raise the exception
         raise
     except Exception as e:
         # Handle the exception
-        print("An error occurred while setting the previous block number: ")
+        print("An error occurred while setting the previous block number!")
         # Re-raise the exception
         raise
     finally:
@@ -299,7 +306,7 @@ def process_blocks_batch(start_block, end_block):
             pool.map(process_block, block_numbers)
     except Exception as e:
         # Handle the exception
-        print("An error occured while processing the blocks batch: ")
+        print("An error occured while processing the blocks batch: ", start_block, end_block)
         # Re-raise the exception
         raise
 
@@ -310,26 +317,27 @@ if __name__ == '__main__':
 
         # Get the previous block number
         prev_block_number = fetch_prev_block_number()
-
+    except Exception as e:
+        # Handle the exception
+        print(e)
+    else:
         # Main loop
         while True:
             # Get the latest block number
-            while True:
-                try:
-                    cur_block_number = w3.eth.blockNumber
-                    break
-                except Exception as e:
-                    # Handle the exception
-                    print("Retrying to get the previous block number...")
-                    time.sleep(1)
-                    continue
+            try:
+                cur_block_number = w3.eth.blockNumber
+                # break
+            except Exception as e:
+                # Handle the exception
+                print("Retrying to get the previous block number...")
+                time.sleep(1)
+                continue
 
-            print('================================')
-            print('Latest block: ', cur_block_number)
+            print("Latest block: ", cur_block_number)
 
             # Check if there are no new blocks
             if cur_block_number == prev_block_number:
-                print('Waiting for new blocks to add...')
+                print("Waiting for new blocks to add...")
                 time.sleep(3)
                 continue
 
@@ -339,21 +347,17 @@ if __name__ == '__main__':
 
             try:
                 # Start multiprocessing the batch
-                print('processing batch:', start_block, end_block)
+                print("processing batch: ", start_block, end_block)
                 process_blocks_batch(start_block, end_block)
-                print('processed batch:', start_block, end_block)
+                print("processed batch: ", start_block, end_block)
 
                 # Store the latest processed batch's end block number
                 update_block_number_table(end_block)
             except Exception as e:
                 # Handle the exception
                 print(e)
-                raise
                 break
 
             # Update the previous block number
             prev_block_number = end_block
-            print('================================')
-    except Exception as e:
-        # Handle the exception
-        print(e)
+            print("=============================================================")

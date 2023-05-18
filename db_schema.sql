@@ -15,12 +15,13 @@ CREATE TABLE IF NOT EXISTS token_transactions (
     value NUMERIC(30, 2)
 );
 
--- Creates a new table to store the last fetched block number
+-- Creates a new table to store the last fetched block number. It has a single row and a single column
 CREATE TABLE IF NOT EXISTS constants (
     block_number BIGINT
 );
 
--- Creates a new table to store the hashes of the transactions that are left out to be processed
+-- Creates a new table to store the hashes of the transactions that are left out to be processed 
+-- along with their block numbers of the current processing batch 
 CREATE TABLE IF NOT EXISTS batch_state (
     block_number BIGINT,
     transaction_hash VARCHAR(255) PRIMARY KEY
